@@ -66,9 +66,9 @@ service Job {
   // The job will be run asynchronously; this method does not wait for it
   // to complete.
   //
-  // If resource limits are provided, the job will be run in its own cgroup
-  // with all the given limits applied. Any combination of the allowed limit
-  // types may be provided; it is not necessary to set all of them.
+  // The job's process will be run in its own cgroup which will exist for the
+  // lifetime of the process. Optionally, all resource limits set in the
+  // 'limits' field will be applied to the cgroup before it is started.
   rpc Start(JobSpec) returns (JobId);
 
   // Stops a running job. Once stopped, this method will wait until the job has
@@ -99,18 +99,17 @@ service Job {
   rpc List(google.protobuf.Empty) returns (JobIdList);
 
   // Streams the combined stdout and stderr output of a running or completed job.
-  // The output always starts from the beginning of process execution. Jobs that
-  // were stopped by the user with the Stop() method will have output up to the
-  // time they were stopped.
   //
-  // If 'follow' is set to true, the output will continue to be be streamed in
-  // real-time until the job completes. Otherwise, only the currently accumulated
-  // output will be written, and the stream will be closed even if the job is
-  // still running.
+  // The output always starts from the beginning of process execution, and will
+  // be written to the stream in real-time until the job completes, or until the
+  // stream is cancelled by the client.
+  //
+  // Jobs that were stopped by the user with the Stop() method will have output
+  // up to the time they were stopped.
   //
   // If the job is already completed, the full output of the job will be
   // written to the stream, after which the stream will be closed.
-  rpc Output(OutputRequest) returns (stream ProcessOutput);
+  rpc Output(JobId) returns (stream ProcessOutput);
 }
 
 // JobSpec describes a command to be run, along with optional resource limits
@@ -136,6 +135,8 @@ enum State {
   Running = 2;
   // The job exited normally (with any exit code), or was terminated via signal.
   Completed = 3;
+  // The job was stopped by the user with the Stop() method.
+  Stopped = 4;
   // The job failed to start, or exited abnormally due to an I/O error.
   Failed = 5;
 }
@@ -171,18 +172,6 @@ message CommandSpec {
   // Optional additional environment variables to set for the command.
   // These will be merged with the job server's environment variables.
   repeated string env = 3;
-  // The working directory for the command. If not specified, the job server's
-  // working directory will be used.
-  optional string cwd = 4;
-  // Optional user id to run the command as.
-  // If not specified, the job server's user id will be used.
-  optional int32 uid = 5;
-  // Optional group id to run the command as.
-  // If not specified, the job server's group id will be used.
-  optional int32 gid = 6;
-  // Optional data to be written to the process's stdin pipe when it starts.
-  // If not specified, the process's stdin will be set to /dev/null.
-  optional bytes stdin = 7;
 }
 
 message ProcessOutput {
@@ -236,11 +225,6 @@ message IOLimits {
   optional int64 writeIops = 5;
 }
 
-message OutputRequest {
-  JobId id     = 1;
-  bool  follow = 2;
-}
-
 ```
 
 Authorization uses a very simple RBAC system. The RBAC configuration is defined as follows:
@@ -271,20 +255,29 @@ message Roles {
   // A list of methods that the role allows access to. The method names must
   // not be qualified with the service name. All methods must exist in the
   // named service. For example, `rpc Bar` in `service Foo` should be "Bar".
-  repeated string allowedMethods = 3;
+  repeated AllowedMethod allowedMethods = 3;
 }
 
-// Describes a role binding, associating a single role with one or more subjects.
+enum Scope {
+  CurrentUser = 0; // default, allows access to jobs created by the current user
+  AllUsers    = 1; // allows access to jobs created by any user
+}
+
+message AllowedMethod {
+  // The name of the method.
+  string name = 1;
+  // The scope that the method applies to (all users, or current user)
+  Scope scope = 2;
+}
+
+// Describes a role binding, associating a single role with one or more users.
 message RoleBindings {
   // An arbitrary unique identifier for the role binding.
   string id = 1;
   // An existing role id.
   string roleId = 2;
-  // A list of subjects that the role applies to. A subject generally refers to
-  // a named user or group, but the actual meaning is left as an implementation
-  // detail for the server, as it largely depends on how its authentication
-  // system is configured.
-  repeated string subjects = 3;
+  // A list of users (usernames/emails) that the role applies to.
+  repeated string users = 3;
 }
 
 ```
@@ -296,16 +289,40 @@ roles:
   - id: adminRole
     service: job.v1.Job
     allowedMethods:
-      - Start
-      - Stop
-      - Status
-      - List
-      - Output
+      - name: Start
+        scope: AllUsers
+      - name: Stop
+        scope: AllUsers
+      - name: Status
+        scope: AllUsers
+      - name: List
+        scope: AllUsers
+      - name: Output
+        scope: AllUsers
+  - id: userRole
+    service: job.v1.Job
+    allowedMethods:
+      - name: Start
+        scope: CurrentUser
+      - name: Stop
+        scope: CurrentUser
+      - name: Status
+        scope: CurrentUser
+      - name: List
+        scope: CurrentUser
+      - name: Output
+        scope: CurrentUser
 roleBindings:
   - id: adminRoleBinding
     roleId: adminRole
-    subjects:
+    users:
       - admin
+  - id: userRoleBinding
+    roleId: userRole
+    users:
+      - user1
+      - user2
+      - user3
 ```
 
 APIs and message types are versioned, initially starting at v1. This will allow future major versions to be introduced without breaking existing clients. Adding new fields to existing messages can be done without breaking compatibility, as long as existing field tags are not changed.
@@ -341,10 +358,7 @@ jobId, err := client.Start(cmd.Context(), &jobv1.JobSpec{
 2. Streaming output:
 
 ```go
-stream, err := client.Output(cmd.Context(), &jobv1.OutputRequest{
-  Id:     jobId,
-  Follow: true,
-})
+stream, err := client.Output(cmd.Context(), jobId)
 if err != nil {
   return err
 }
@@ -375,19 +389,19 @@ $ sudo jobserver serve --listen-address=127.0.0.1:9090 --rbac=rbac-config.yaml \
 
 # to use the client, flags to configure cert and key paths, and the server address, are required.
 # these are omitted in the remaining examples for brevity.
-$ jobserver --address=127.0.0.1:9090 --cacert=ca.crt --cert=tls.crt --key=tls.key ...
+$ jobctl --address=127.0.0.1:9090 --cacert=ca.crt --cert=tls.crt --key=tls.key ...
 
 # starting a job:
 # for commands that don't require flag args, they can be passed as-is:
-$ jobserver run kubectl logs pod/example
+$ jobctl run kubectl logs pod/example
 <job-id> # job id is printed
 
 # for commands that do require flag args, the expected '--' delimiter can be used:
-$ jobserver run -- kubectl logs --follow pod/example
+$ jobctl run -- kubectl logs --follow pod/example
 <job-id>
 
 # to start a job with resource limits:
-$ jobserver run \
+$ jobctl run \
   --cpus=100m \ # 100 milli-cores; can also write e.g. '--cpus=2' for 2 cores (no float values)
   --memory=1Gi --memory-soft-limit=512Mi \ # the familiar suffixes can be used for memory limits
   --device-read-bps=8:16=200 \ # format is major:minor=value (bytes per second)
@@ -396,21 +410,21 @@ $ jobserver run \
   -- go build -o bin/jobserver ./cmd/jobserver
 
 # stopping a job:
-$ jobserver stop <job-id>
+$ jobctl stop <job-id>
 <job-id>
 
 # getting the status of a job:
-$ jobserver status <job-id>
+$ jobctl status <job-id>
 state: running
 pid: 1234
 start time: 2006-01-02T15:04:05Z07:00
 
-# getting the output of a job:
-$ jobserver logs [--follow] <job-id>
+# streaming the output of a job:
+$ jobctl logs <job-id>
 <output>
 
 # getting a list of all job ids:
-$ jobserver list
+$ jobctl list
 JOB ID      COMMAND       CREATED          STATUS
 <id-1>      kubectl       2006-01-02...    Running
 <id-2>      go            2006-01-02...    Completed
@@ -423,7 +437,7 @@ JOB ID      COMMAND       CREATED          STATUS
 Output streaming will be implemented as follows:
 
 1. When a job is started, we will pipe the combined stdout and stderr of its process to a simple in-memory buffer.
-2. When a client initiates a stream by calling `Output()`, we will write the current contents of the buffer to the stream in 4MB chunks. Then, if the client requested to follow the output, the server will keep the stream open, and any subsequent reads from the process's output will be duplicated to all clients that are following the stream, in addition to the server's own buffer.
+2. When a client initiates a stream by calling `Output()`, we will write the current contents of the buffer to the stream in 512KiB chunks. Then, if the client requested to follow the output, the server will keep the stream open, and any subsequent reads from the process's output will be duplicated to all clients that are following the stream, in addition to the server's own buffer.
 
 #### Process Lifecycle
 
@@ -432,33 +446,34 @@ For jobs that do not specify resource limits, they will be run as a child proces
 On startup, the server will do the following (simplifying, there will be additional abstractions here):
 
 1. Ensure its euid is 0 so it can manage cgroups, and ensure that cgroups v2 is enabled.
-2. Create a parent cgroup in `/user.slice/user-<uid>.slice/jobserver` if it doesn't exist. The specific path can be determined by first identifying its own cgroup from `/proc/self/cgroup` (which, if run as `sudo jobserver serve`, will be something like `/user.slice/user-<uid>.slice/<terminal emulator's cgroup>/vte-spawn-<some uuid>.scope`), then walking the tree up until it finds a cgroup matching `user-*.slice`.
-3. Enable the `cpu`, `memory`, and `io` controllers in the `jobserver` cgroup's `cgroup.subtree_control` file, if necessary.
+2. Create a top level cgroup in `/kralicky-jobserver/` if it doesn't exist.
+3. Enable the `cpu`, `memory`, and `io` controllers in the `kralicky-jobserver` cgroup's `cgroup.subtree_control` file, if necessary.
 
 The lifecycle of a job's cgroup will be as follows:
 
-1. When a job is created with resource limits, the server will create a new cgroup with the name `<job-id>` under the parent `jobserver` cgroup.
+1. When a job is created with resource limits, the server will create a new cgroup with the name `<job-id>` under the parent `kralicky-jobserver` cgroup.
 2. The server will write the requested resource limits to the new cgroup's `cpu.max`, `memory.max`, and `io.max` files (for whichever limits were specified).
-3. The server will create a file descriptor to the new cgroup by opening its path (`/sys/fs/cgroup/user.slice/user-<uid>.slice/jobserver/<job-id>`).
+3. The server will create a file descriptor to the new cgroup by opening its path (`/kralicky-jobserver/<job-id>`).
 4. The server will configure the `exec.Cmd`'s `SysProcAttr` with `CgroupFd` set to the file descriptor. When this is set, Go will call `clone3` with `CLONE_INTO_CGROUP` so that the new child process is started directly in the new cgroup.
-5. When the process exits, the server will close the file descriptor and delete the job's cgroup.
+5. When the process exits, the server will, in order:
+   - Close the file descriptor
+   - Kill any remaining processes in the job's cgroup by writing "1" to its cgroup.kill file
+   - Remove the job's cgroup directory
 
 Other notes:
 
 - When clients are streaming logs for a running process, the server will close those streams once the process has exited and all logs have been written.
-- The server will not attempt to modify the controllers of its parent cgroups, so if `user-<uid>.slice` doesn't have any of the required controlers enabled, it will simply bail out.
-- The user will be able to override the default parent cgroup path with a flag, since there can be some variation in the cgroup hierarchy depending on the system.
 
 ### Security
 
 #### Authentication and Authorization
 
-Authentication is implemented using simple mTLS, with a subject name encoded in the client certificate's common name field.
+Authentication is implemented using simple mTLS, with a username encoded in the client certificate's common name field.
 
 TLS 1.3 will be enforced by the server. The Go implementation uses a fixed set of 3 very strong cipher suites - `chacha20-poly1305-sha256`, `aes-128-gcm-sha256`, and `aes-256-gcm-sha384` (no aes ccm modes) - and requires no additional configuration or tuning outside of setting the minimum TLS version to 1.3.
 
-To authorize a user for a specific api method, the server will match the client's subject name against the rbac rules it loaded from the config file,
-then check to see if that subject is named in a role binding for which the associated role allows access to the method the client is calling.
+To authorize a user for a specific api method, the server will match the client's username against the rbac rules it loaded from the config file,
+then check to see if that username is listed in a role binding for which the associated role allows access to the method the client is calling.
 
 The client's certificate information can be obtained from from GRPC peer info inside a server interceptor. The peer info will store the client's credentials as a `credentials.TLSInfo` struct, which contains the client's verified chains. From there we can read the verified client cert's common name and use it for authorization.
 
