@@ -1,0 +1,203 @@
+syntax = "proto3";
+
+package job.v1;
+
+import "github.com/kralicky/jobserver/pkg/apis/rbac/v1/rbac.proto";
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/kralicky/jobserver/pkg/apis/job/v1";
+
+service Job {
+  // Starts a new job, and returns its id if it was started successfully.
+  //
+  // The job will be run asynchronously; this method does not wait for it
+  // to complete.
+  //
+  // The job's process will be run in its own cgroup which will exist for the
+  // lifetime of the process. Optionally, all resource limits set in the
+  // 'limits' field will be applied to the cgroup before it is started.
+  rpc Start(JobSpec) returns (JobId);
+
+  // Stops a running job. Once stopped, this method will wait until the job has
+  // completed before returning.
+  //
+  // This will first attempt to stop the job's process using SIGTERM, but if the
+  // process does not exit within a short grace period, it will be forcefully
+  // killed with SIGKILL.
+  //
+  // A job must be in the Running state to be stopped. If the job is in any
+  // other state, this returns a FailedPrecondition error.
+  rpc Stop(JobId) returns (google.protobuf.Empty) {
+    option (rbac.v1.scope).enabled = true;
+  }
+
+  // Returns the status of an existing job.
+  //
+  // If the job is completed, detailed termination status will be present in
+  // the response. Jobs stopped by the user with the Stop() method will
+  // additionally have the 'stopped' field set to true.
+  //
+  // In the event the job failed to start, the 'message' field will contain a
+  // human-readable error message. Otherwise, it will contain a description of
+  // the current state (if running), or an explanation for why the job was
+  // terminated (if terminated).
+  rpc Status(JobId) returns (JobStatus) {
+    option (rbac.v1.scope).enabled = true;
+  }
+
+  // Returns a list of all job IDs that are currently known to the server.
+  //
+  // All jobs, regardless of state, are included. No guarantees are made about
+  // the order of ids in the list.
+  rpc List(google.protobuf.Empty) returns (JobIdList) {
+    option (rbac.v1.scope).enabled = true;
+  }
+
+  // Streams the combined stdout and stderr output of a running or completed job.
+  //
+  // The output always starts from the beginning of process execution, and will
+  // be written to the stream in real-time until the job completes, or until the
+  // stream is cancelled by the client.
+  //
+  // Jobs that were stopped by the user with the Stop() method will have output
+  // up to the time they were stopped.
+  //
+  // If the job is already completed, the full output of the job will be
+  // written to the stream, after which the stream will be closed.
+  rpc Output(JobId) returns (stream ProcessOutput) {
+    option (rbac.v1.scope).enabled = true;
+  }
+}
+
+// JobSpec describes a command to be run, along with optional resource limits
+// that should be applied to the command's process.
+message JobSpec {
+  CommandSpec    command = 1;
+  ResourceLimits limits  = 2;
+}
+
+message JobId {
+  string id = 1;
+}
+
+message JobIdList {
+  repeated JobId items = 1;
+}
+
+// State describes the logical state of a job.
+//
+//   ┌─────────────────────────────────────────┐
+//   │                                         │
+//   │              ┌────────┐                 │
+//   │      ┌──────►│ Failed │                 │
+//   │      │       └────────┘                 │
+//   │ ┌────┴────┐              ┌────────────┐ │
+//   │ │ Pending │              │ Terminated │ │
+//   │ └────┬────┘              └────────────┘ │
+//   │      │       ┌─────────┐        ▲       │
+//   │      └──────►│ Running ├────────┘       │
+//   │              └─────────┘                │
+//   │                                         │
+//   └─────────────────────────────────────────┘
+enum State {
+  Unknown = 0;
+  // The job is waiting to be started, and is not yet running.
+  Pending = 1;
+  // The job failed to start.
+  Failed = 2;
+  // The job started successfully and is currently running.
+  Running = 3;
+  // The job is no longer running.
+  Terminated = 4;
+}
+
+message JobStatus {
+  // The job's logical state.
+  State state = 1;
+  // The job's original spec.
+  JobSpec spec = 2;
+  // A human-readable message describing the job's state, or an error message
+  // if the job failed.
+  string message = 3;
+
+  // The PID of the job's process. Only present if the job is in the Running
+  // or Terminated state.
+  int32 pid = 4;
+  // The time at which the job was started. Only present if the job is
+  // in the Running or Terminated state.
+  google.protobuf.Timestamp startTime = 5;
+  // Termination details. Only present if the job is in the Terminated state.
+  TerminationStatus terminated = 6;
+}
+
+// Contains details about the cause of the process's termination.
+message TerminationStatus {
+  // If the process exited normally, this will contain its exit code. Otherwise,
+  // if it was terminated by a signal, it will not be present.
+  optional int32 exitCode = 1;
+  // If the process was terminated by a signal, this will contain the signal
+  // number. Otherwise, it will not be present.
+  optional int32 signal = 2;
+  // If the process was stopped by the user with the Stop() method, this will
+  // be true. Otherwise, it will be false.
+  bool stopped = 3;
+  // The time at which the process was terminated.
+  google.protobuf.Timestamp time = 4;
+}
+
+message CommandSpec {
+  // The command name to run. Required.
+  string command = 1;
+  // The command's arguments, not containing the command name itself.
+  repeated string args = 2;
+  // Optional additional environment variables to set for the command.
+  // These will be merged with the job server's environment variables.
+  repeated string env = 3;
+}
+
+message ProcessOutput {
+  // A chunk of output from the process's combined stdout and stderr streams.
+  //
+  // This is a raw byte stream, and may contain arbitrary binary data,
+  // depending on the command being run. It is up to the client to interpret
+  // the output correctly based on the command being run. No guarantees are
+  // made about the size of each chunk, or the frequency at which they
+  // are sent.
+  bytes output = 1;
+}
+
+message ResourceLimits {
+  // Process CPU limit defined in milli-cores (1000 = 1 core/vcpu)
+  optional int64 cpu = 1;
+  // Process memory limit defined in bytes
+  optional MemoryLimits memory = 2;
+  // Process IO limits for storage devices
+  repeated IODeviceLimits io = 3;
+}
+
+message MemoryLimits {
+  // Memory soft limit defined in bytes. Processes exceeding the limit are
+  // not OOM-killed, but may be throttled by the kernel.
+  optional int64 softLimit = 1;
+  // Memory limit defined in bytes. If exceeded, the process will be OOM-killed.
+  optional int64 limit = 2;
+}
+
+message IODeviceLimits {
+  // Device path (e.g. /dev/sda)
+  string device = 1;
+  // Limits for the device
+  IOLimits limits = 2;
+}
+
+message IOLimits {
+  // Limit for read operations in bytes per second
+  optional int64 readBps = 2;
+  // Limit for write operations in bytes per second
+  optional int64 writeBps = 3;
+  // Limit for read operations in IOPS
+  optional int64 readIops = 4;
+  // Limit for write operations in IOPS
+  optional int64 writeIops = 5;
+}
