@@ -26,7 +26,7 @@ var _ = Describe("Scope", func() {
 	}
 	JustBeforeEach(func() {
 		rbacConfig := &rbacv1.Config{
-			Roles: []*rbacv1.Roles{
+			Roles: []*rbacv1.Role{
 				{
 					Id:      "test-role",
 					Service: "foo.bar.Example",
@@ -38,7 +38,7 @@ var _ = Describe("Scope", func() {
 					},
 				},
 			},
-			RoleBindings: []*rbacv1.RoleBindings{
+			RoleBindings: []*rbacv1.RoleBinding{
 				{
 					Id:     "test-role-binding",
 					RoleId: "test-role",

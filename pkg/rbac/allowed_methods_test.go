@@ -39,14 +39,14 @@ var _ = Describe("AllowedMethods Middleware", func() {
 	When("the user is allowed access to the method", func() {
 		BeforeEach(func() {
 			rbacConfig = &rbacv1.Config{
-				Roles: []*rbacv1.Roles{
+				Roles: []*rbacv1.Role{
 					{
 						Id:             "test-role",
 						Service:        "foo.bar.Example",
 						AllowedMethods: []*rbacv1.AllowedMethod{{Name: "Test"}},
 					},
 				},
-				RoleBindings: []*rbacv1.RoleBindings{
+				RoleBindings: []*rbacv1.RoleBinding{
 					{
 						Id:     "test-role-binding",
 						RoleId: "test-role",
@@ -64,14 +64,14 @@ var _ = Describe("AllowedMethods Middleware", func() {
 	When("the user's role does not contain the method they are calling", func() {
 		BeforeEach(func() {
 			rbacConfig = &rbacv1.Config{
-				Roles: []*rbacv1.Roles{
+				Roles: []*rbacv1.Role{
 					{
 						Id:             "test-role",
 						Service:        "foo.bar.Example",
 						AllowedMethods: []*rbacv1.AllowedMethod{{Name: "WrongMethod"}},
 					},
 				},
-				RoleBindings: []*rbacv1.RoleBindings{
+				RoleBindings: []*rbacv1.RoleBinding{
 					{
 						Id:     "test-role-binding",
 						RoleId: "test-role",
@@ -89,14 +89,14 @@ var _ = Describe("AllowedMethods Middleware", func() {
 	When("the user's role contains the method name, but the service name does not match", func() {
 		BeforeEach(func() {
 			rbacConfig = &rbacv1.Config{
-				Roles: []*rbacv1.Roles{
+				Roles: []*rbacv1.Role{
 					{
 						Id:             "test-role",
 						Service:        "foo.bar.WrongService",
 						AllowedMethods: []*rbacv1.AllowedMethod{{Name: "Test"}},
 					},
 				},
-				RoleBindings: []*rbacv1.RoleBindings{
+				RoleBindings: []*rbacv1.RoleBinding{
 					{
 						Id:     "test-role-binding",
 						RoleId: "test-role",
@@ -114,14 +114,14 @@ var _ = Describe("AllowedMethods Middleware", func() {
 	When("the role contains the method, but the user is not named in the role binding", func() {
 		BeforeEach(func() {
 			rbacConfig = &rbacv1.Config{
-				Roles: []*rbacv1.Roles{
+				Roles: []*rbacv1.Role{
 					{
 						Id:             "test-role",
 						Service:        "foo.bar.Example",
 						AllowedMethods: []*rbacv1.AllowedMethod{{Name: "Test"}},
 					},
 				},
-				RoleBindings: []*rbacv1.RoleBindings{
+				RoleBindings: []*rbacv1.RoleBinding{
 					{
 						Id:     "test-role-binding",
 						RoleId: "test-role",

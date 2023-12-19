@@ -9,13 +9,13 @@ option go_package = "github.com/kralicky/jobserver/pkg/apis/rbac/v1;rbacv1";
 // Describes a complete RBAC configuration.
 message Config {
   // A list of available roles.
-  repeated Roles roles = 2;
+  repeated Role roles = 2;
   // A list of available role bindings.
-  repeated RoleBindings role_bindings = 3;
+  repeated RoleBinding role_bindings = 3;
 }
 
 // Describes a role that allows access to methods within a service.
-message Roles {
+message Role {
   // An arbitrary unique identifier for the role.
   string id = 1;
   // The service name to which the role applies. Should be qualified to
@@ -42,7 +42,7 @@ message AllowedMethod {
 }
 
 // Describes a role binding, associating a single role with one or more users.
-message RoleBindings {
+message RoleBinding {
   // An arbitrary unique identifier for the role binding.
   string id = 1;
   // An existing role id.
