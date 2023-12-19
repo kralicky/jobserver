@@ -3,8 +3,10 @@
 package main
 
 import (
+	"fmt"
 	"os"
 
+	_ "github.com/kralicky/jobserver/pkg/logger"
 	"github.com/kralicky/protols/sdk/codegen"
 	"github.com/magefile/mage/mg"
 	"github.com/magefile/mage/sh"
@@ -12,20 +14,22 @@ import (
 
 var Default = Build
 
+// Builds all main packages under ./cmd/...
 func Build() error {
 	mg.Deps(Generate)
 
-	args := []string{
-		"build", "-o", "bin/", "./cmd/...",
-	}
-	return sh.RunV(mg.GoCmd(), args...)
+	return sh.RunV(mg.GoCmd(), "build", fmt.Sprintf("-v=%t", mg.Verbose()), "-o", "bin/", "./cmd/...")
 }
 
+// Generates protobuf code.
 func Generate() error {
 	return codegen.GenerateWorkspace()
 }
 
-func SampleCerts() error {
+type Example mg.Namespace
+
+// Generates a set of sample certificates for testing.
+func (Example) Certs() error {
 	os.RemoveAll("examples/certs")
 	if err := os.MkdirAll("examples/certs", 0755); err != nil {
 		return err
@@ -51,4 +55,9 @@ func SampleCerts() error {
 		}
 	}
 	return nil
+}
+
+// Runs all tests
+func Test() error {
+	return sh.RunV(mg.GoCmd(), "test", "-v", "-race", "./...")
 }
