@@ -4,7 +4,6 @@ import (
 	"container/list"
 	"context"
 	"io"
-	"slices"
 	"sync"
 )
 
@@ -29,173 +28,209 @@ import (
 // read from until they are closed. Leaving the buffer open will cause all
 // readers to block indefinitely.
 type StreamBuffer struct {
-	mu     sync.Mutex
-	chunks *list.List
-	closed bool
+	chunksMu sync.RWMutex
+	chunks   *list.List
+	closed   bool
+
+	// A list of channels that the buffer will attempt to write to whenever
+	// new data is written to the buffer. This is used to notify stream readers
+	// that are reading in real time and are awaiting new data.
+	notifiers map[int64]chan<- struct{}
+	nextID    int64 // notifier ID counter
+
+	// guards reads and writes to the current chunk
+	rtMu sync.RWMutex
 }
 
-const (
-	maxChunkSize = 4 * 1024
-)
+const maxChunkSize = 4096
 
 var _ io.WriteCloser = (*StreamBuffer)(nil)
 
 func NewStreamBuffer() *StreamBuffer {
 	buf := &StreamBuffer{
-		chunks: list.New(),
+		chunks:    list.New(),
+		notifiers: make(map[int64]chan<- struct{}),
 	}
 	buf.chunks.PushBack(newChunk())
 	return buf
 }
 
 func (b *StreamBuffer) Write(p []byte) (n int, err error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
+	b.chunksMu.Lock()
+	defer b.chunksMu.Unlock()
 
 	if b.closed {
 		return 0, io.ErrClosedPipe
 	}
+	lenP := len(p)
 
-	tail := b.acquireLastChunkLocked()
-	chunk := tail.Value.(*chunk)
-	chunk.Append(p)
+	// if necessary, split p across multiple chunks
+	for len(p) > 0 {
+		tail := b.acquireLastChunkLocked()
+		chunk := tail.Value.(*chunk)
+		b.rtMu.Lock()
+		// check if p would fit in the current chunk without overflowing
+		remainingSpace := cap(chunk.buf) - len(chunk.buf)
+		if len(p) <= remainingSpace {
+			chunk.buf = append(chunk.buf, p...)
+			p = nil
+		} else {
+			chunk.buf = append(chunk.buf, p[:remainingSpace]...)
+			p = p[remainingSpace:]
+		}
+		b.rtMu.Unlock()
+		for _, nc := range b.notifiers {
+			select {
+			case nc <- struct{}{}:
+			default:
+			}
+		}
+	}
 
-	return len(p), nil
+	return lenP, nil
 }
 
 func (b *StreamBuffer) Close() error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
+	b.chunksMu.Lock()
+	defer b.chunksMu.Unlock()
 	if b.closed {
 		return nil
 	}
 	b.closed = true
-	b.chunks.Back().Value.(*chunk).Seal()
+	close(b.chunks.Back().Value.(*chunk).sealed)
 	return nil
 }
 
 func (b *StreamBuffer) NewStream(ctx context.Context) <-chan []byte {
-	b.mu.Lock()
-	defer b.mu.Unlock()
+	b.chunksMu.Lock()
+	defer b.chunksMu.Unlock()
 
-	mu := sync.Mutex{}
-	var done bool
-	rc := make(chan []byte)
-	closeOnce := sync.OnceFunc(func() {
-		mu.Lock()
-		defer mu.Unlock()
-		done = true
-		close(rc)
+	rc := make(chan []byte, 1)
+
+	notifier := make(chan struct{})
+	b.nextID++
+	id := b.nextID
+	b.notifiers[id] = notifier
+
+	context.AfterFunc(ctx, func() {
+		b.chunksMu.Lock()
+		defer b.chunksMu.Unlock()
+		delete(b.notifiers, id)
+		close(notifier)
 	})
 
 	go func() {
-		defer closeOnce()
-		for elem := b.headChunk(); elem != nil; elem = b.nextChunk(elem) {
+		defer close(rc)
+		for elem := b.firstChunk(); elem != nil; elem = b.nextChunkUnsafe(elem) {
 			off := 0
 			c := elem.Value.(*chunk)
+		CHUNK:
 			for {
-				bytes, more := c.Next(off)
-				mu.Lock()
-				if done {
-					mu.Unlock()
+				data, stat := c.Next(ctx, off, &b.rtMu, notifier)
+				if len(data) > 0 {
+					rc <- data
+					off += len(data)
+				}
+				switch stat {
+				case ReadAgain:
+					continue
+				case ReadComplete:
+					break CHUNK
+				case Canceled:
 					return
-				}
-				if len(bytes) > 0 {
-					rc <- bytes
-					off += len(bytes)
-				}
-				mu.Unlock()
-				if !more {
-					break
 				}
 			}
 		}
 	}()
-
-	context.AfterFunc(ctx, closeOnce)
 	return rc
+}
+
+func (b *StreamBuffer) firstChunk() *list.Element {
+	b.chunksMu.RLock()
+	defer b.chunksMu.RUnlock()
+	return b.chunks.Front()
+}
+
+// NB: this method *does not lock* and imposes the following input constraint:
+// For any input 'elem', elem.Next() must always return the same result. It
+// can return nil, but only in the case where no more chunks will ever be
+// added to the buffer (i.e. the buffer is closed).
+//
+// The buffer ensures this by pushing a new chunk onto the end of the list
+// before sealing the previous chunk, which is the only scenario in which this
+// method is called by stream readers.
+func (b *StreamBuffer) nextChunkUnsafe(elem *list.Element) *list.Element {
+	return elem.Next()
 }
 
 func (b *StreamBuffer) acquireLastChunkLocked() *list.Element {
 	end := b.chunks.Back()
 	if end == nil {
-		return b.chunks.PushBack(newChunk())
+		panic("bug: chunks list is empty")
 	}
 
 	endChunk := end.Value.(*chunk)
-	if endChunk.Len() >= maxChunkSize {
+	if endChunk.Len(&b.rtMu) >= maxChunkSize {
 		nc := b.chunks.PushBack(newChunk())
-		endChunk.Seal() // NB: this must be done after the new chunk is added
+		close(endChunk.sealed)
 		return nc
 	}
 	return end
 }
 
-func (b *StreamBuffer) headChunk() *list.Element {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.chunks.Front()
-}
-
-func (b *StreamBuffer) nextChunk(after *list.Element) *list.Element {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return after.Next()
-}
-
 type chunk struct {
 	buf    []byte
-	sealed bool
-	mu     sync.RWMutex
-	rcond  sync.Cond
+	sealed chan struct{}
 }
 
-func (c *chunk) Len() int {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+func (c *chunk) Len(rtMu *sync.RWMutex) int {
+	rtMu.RLock()
+	defer rtMu.RUnlock()
 	return len(c.buf)
 }
 
-func (c *chunk) Seal() {
-	c.mu.Lock()
-	c.sealed = true
-	c.mu.Unlock()
-	c.rcond.Broadcast()
-}
+type status int
 
-func (c *chunk) Append(bytes []byte) {
-	c.mu.Lock()
-	c.buf = append(c.buf, bytes...)
-	c.mu.Unlock()
-	c.rcond.Broadcast()
-}
+const (
+	ReadAgain status = iota
+	ReadComplete
+	Canceled
+)
 
-func (c *chunk) Next(offset int) ([]byte, bool) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	switch {
-	case offset > len(c.buf):
-		panic("bug: offset out of range")
-	case offset < len(c.buf):
-		return slices.Clone(c.buf[offset:]), !c.sealed
-	default: // offset == len(c.buf)
-		for !c.sealed {
-			c.rcond.Wait()
-			if offset < len(c.buf) {
-				return slices.Clone(c.buf[offset:]), true
+func (c *chunk) Next(ctx context.Context, offset int, rtMu *sync.RWMutex, rtWait <-chan struct{}) ([]byte, status) {
+	select {
+	case <-c.sealed:
+		return c.nextSealed(offset) // fast path for sealed chunks, no locking required
+	default:
+		rtMu.RLock()
+		switch {
+		case offset > len(c.buf):
+			panic("bug: offset out of range")
+		case offset < len(c.buf):
+			defer rtMu.RUnlock()
+			return c.buf[offset:], ReadAgain
+		default: // offset == len(c.buf)
+			rtMu.RUnlock()
+			select {
+			case <-ctx.Done():
+				return nil, Canceled
+			case <-c.sealed:
+				return c.nextSealed(offset)
+			case <-rtWait:
+				return nil, ReadAgain
 			}
 		}
-		if offset < len(c.buf) {
-			return slices.Clone(c.buf[offset:]), false
-		}
-		return nil, false
 	}
+}
+
+func (c *chunk) nextSealed(offset int) ([]byte, status) {
+	return c.buf[offset:], ReadComplete
 }
 
 func newChunk() *chunk {
 	c := &chunk{
-		buf: make([]byte, 0, maxChunkSize),
+		buf:    make([]byte, 0, maxChunkSize),
+		sealed: make(chan struct{}),
 	}
-	c.rcond.L = c.mu.RLocker()
 	return c
 }

@@ -2,11 +2,16 @@ package util_test
 
 import (
 	"context"
+	"crypto/rand"
+	"fmt"
 	"io"
+	mathrand "math/rand"
 	"sync"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/onsi/gomega/gmeasure"
 
 	"github.com/kralicky/jobserver/pkg/util"
 )
@@ -46,6 +51,56 @@ var _ = Describe("StreamBuffer", func() {
 			Expect(buf1).To(Equal(buf2))
 			for i := 0; i < 256; i++ {
 				Expect(buf1[i]).To(Equal(byte(i)))
+			}
+		})
+		It("should split large writes into chunks", func(ctx SpecContext) {
+			numReaders := 100
+			buf := util.NewStreamBuffer()
+			readers := make([]<-chan []byte, numReaders)
+			for i := 0; i < numReaders; i++ {
+				readers[i] = buf.NewStream(ctx)
+			}
+			actualReadCounts := make([]int64, numReaders)
+			bench := gmeasure.NewExperiment("benchmark")
+			AddReportEntry(bench.Name, bench)
+
+			var wg sync.WaitGroup
+			totalSize := 10 * 1024 * 1024 // 10MB
+			wg.Add(numReaders)
+			for i := 0; i < numReaders; i++ {
+				i := i
+				r := readers[i]
+				go func() {
+					defer wg.Done()
+					var buf []byte
+					start := time.Now()
+					for {
+						bytes, ok := <-r
+						if !ok {
+							break
+						}
+						buf = append(buf, bytes...)
+					}
+					duration := time.Since(start)
+					bench.RecordValue("per-stream read rate", float64(len(buf))/duration.Seconds()/1024, gmeasure.Units("KiB/s"))
+					actualReadCounts[i] = int64(len(buf))
+				}()
+			}
+			written := 0
+			start := time.Now()
+			for written < totalSize {
+				// read a random number of bytes between 1 and 8KB
+				n := min(mathrand.Intn(8*1024), totalSize-written)
+				data := make([]byte, n)
+				Expect(rand.Read(data)).To(Equal(n))
+				Expect(buf.Write(data)).To(Equal(n))
+				written += n
+			}
+			bench.RecordValue("buffer write rate", float64(totalSize)/time.Since(start).Seconds()/1024, gmeasure.Units("KiB/s"))
+			buf.Close()
+			wg.Wait()
+			for i := 0; i < numReaders; i++ {
+				Expect(actualReadCounts[i]).To(Equal(int64(totalSize)))
 			}
 		})
 		It("should duplicate writes to all streams", func(ctx SpecContext) {
@@ -89,6 +144,62 @@ var _ = Describe("StreamBuffer", func() {
 			Expect(recv).To(Equal([]byte("hello world")))
 			Eventually(r).Should(BeClosed())
 		})
+	})
+	Specify("slow readers should not block fast readers", func(ctx SpecContext) {
+		buf := util.NewStreamBuffer()
+
+		fastReader := buf.NewStream(ctx)
+
+		slowReader := buf.NewStream(ctx)
+
+		contents := make([]byte, 1024*1024) // 1MB
+		Expect(rand.Read(contents)).To(Equal(len(contents)))
+
+		fastreadC := make(chan []byte)
+		slowreadC := make(chan []byte)
+		go func() {
+			var fastRead []byte
+			for {
+				bytes, ok := <-fastReader
+				if !ok {
+					break
+				}
+				fastRead = append(fastRead, bytes...)
+			}
+			fastreadC <- fastRead
+		}()
+		go func() {
+			var slowRead []byte
+			for {
+				bytes, ok := <-slowReader
+				if !ok {
+					break
+				}
+				slowRead = append(slowRead, bytes...)
+				time.Sleep(10 * time.Millisecond)
+			}
+			slowreadC <- slowRead
+		}()
+
+		n, err := buf.Write(contents)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(n).To(Equal(len(contents)))
+		buf.Close()
+
+		start := time.Now()
+		fastRead := <-fastreadC
+		fastTime := time.Since(start)
+		fmt.Fprintln(GinkgoWriter, "fast read took", fastTime)
+
+		slowRead := <-slowreadC
+		slowTime := time.Since(start)
+		fmt.Fprintln(GinkgoWriter, "slow read took", slowTime)
+		// 10x is just a sanity check, in actuality it's on the order of 1000x
+		// (unless the race detector is enabled or something)
+		Expect(fastTime * 10).To(BeNumerically("<", slowTime))
+
+		Expect(fastRead).To(Equal(contents))
+		Expect(slowRead).To(Equal(contents))
 	})
 	When("canceling the context of a stream", func() {
 		It("should stop receiving data", func(ctx SpecContext) {
