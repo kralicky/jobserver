@@ -23,8 +23,6 @@ type v2Process struct {
 	done       chan struct{}
 
 	statusMu sync.Mutex
-	stopped  bool
-	stopOnce sync.Once
 	status   *jobv1.JobStatus
 }
 
@@ -45,13 +43,13 @@ func (j *v2Process) start() {
 		lg.Error("failed to start command")
 		j.streamBuf.Close()
 		close(j.done)
-		j.status.State = jobv1.State_Failed
+		j.status.State = jobv1.State_FAILED
 		j.status.Message = err.Error()
 		return
 	}
 	j.status.StartTime = timestamppb.Now()
-	j.status.State = jobv1.State_Running
-	j.status.Message = jobv1.State_Running.String()
+	j.status.State = jobv1.State_RUNNING
+	j.status.Message = jobv1.State_RUNNING.String()
 	j.status.Pid = int32(j.cmd.Process.Pid)
 	lg.Info("command started")
 	go func() {
@@ -69,15 +67,13 @@ func (j *v2Process) start() {
 			Time:    endTime,
 		}
 		if ws.Exited() {
-			code := int32(ws.ExitStatus())
-			term.ExitCode = &code
+			term.ExitCode = int32(ws.ExitStatus())
 		}
 		if ws.Signaled() {
-			signal := int32(ws.Signal())
-			term.Signal = &signal
+			term.Signal = int32(ws.Signal())
 		}
 
-		j.status.State = jobv1.State_Terminated
+		j.status.State = jobv1.State_TERMINATED
 		j.status.Message = j.cmd.ProcessState.String()
 		j.status.Terminated = term
 

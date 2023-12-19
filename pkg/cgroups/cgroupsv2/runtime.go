@@ -3,7 +3,6 @@ package cgroupsv2
 import (
 	"context"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -24,7 +23,7 @@ type v2Runtime struct {
 	mgr *cgroupManager
 }
 
-func NewRuntime() (jobs.Runtime, error) {
+func newRuntime() (jobs.Runtime, error) {
 	mgr, err := newCgroupManager()
 	if err != nil {
 		return nil, fmt.Errorf("failed to setup jobserver cgroup: %w", err)
@@ -83,14 +82,14 @@ func (l *v2Runtime) Execute(ctx context.Context, spec *jobv1.JobSpec) (jobs.Proc
 		cmdContext: ctx,
 		done:       done,
 		status: &jobv1.JobStatus{
-			State:   jobv1.State_Pending,
-			Message: jobv1.State_Pending.String(),
+			State:   jobv1.State_PENDING,
+			Message: jobv1.State_PENDING.String(),
 			Spec:    spec,
 		},
 	}
 
 	if err := l.configureCgroup(job, id, spec.GetLimits()); err != nil {
-		job.status.State = jobv1.State_Failed
+		job.status.State = jobv1.State_FAILED
 		job.status.Message = err.Error()
 		return nil, err
 	}
@@ -106,24 +105,24 @@ func (l *v2Runtime) configureCgroup(job *v2Process, id string, limits *jobv1.Res
 	if err != nil {
 		return fmt.Errorf("failed to create cgroup for job %s: %w", id, err)
 	}
-	cf, err := os.OpenFile(path, syscall.O_RDONLY, 0)
-	if err != nil {
-		switch {
-		case errors.Is(err, syscall.EBUSY):
-			return fmt.Errorf("%w: cgroup %s has domain controllers enabled in cgroup.subtree_control", err, path)
-		case errors.Is(err, syscall.EOPNOTSUPP):
-			return fmt.Errorf("%w: cgroup %s is in the 'domain invalid' state", err, path)
-		default:
+	var cf int
+	for {
+		cf, err = syscall.Open(path, syscall.O_RDONLY|syscall.O_CLOEXEC, 0)
+		if err != nil {
+			if err == syscall.EINTR {
+				continue
+			}
 			return fmt.Errorf("failed to open cgroup %s: %w", path, err)
 		}
+		break
 	}
 	job.cmd.SysProcAttr = &syscall.SysProcAttr{
 		UseCgroupFD: true,
-		CgroupFD:    int(cf.Fd()),
+		CgroupFD:    cf,
 	}
 	go func() {
 		<-job.Done()
-		if err := cf.Close(); err != nil {
+		if err := syscall.Close(cf); err != nil {
 			slog.Error("failed to close cgroup file descriptor", "path", path, "error", err)
 		}
 		if err := killCgroup(path); err != nil {
@@ -140,8 +139,10 @@ func (l *v2Runtime) configureCgroup(job *v2Process, id string, limits *jobv1.Res
 
 var _ jobs.Runtime = (*v2Runtime)(nil)
 
+const Magic = 0x63677270
+
 func init() {
-	jobs.RegisterRuntime(cgroups.Version2, func() (jobs.Runtime, error) {
-		return NewRuntime()
+	jobs.RegisterRuntime(cgroups.NewFilesystemRuntimeID(Magic), func() (jobs.Runtime, error) {
+		return newRuntime()
 	})
 }

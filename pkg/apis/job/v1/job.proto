@@ -6,7 +6,7 @@ import "github.com/kralicky/jobserver/pkg/apis/rbac/v1/rbac.proto";
 import "google/protobuf/empty.proto";
 import "google/protobuf/timestamp.proto";
 
-option go_package = "github.com/kralicky/jobserver/pkg/apis/job/v1";
+option go_package = "github.com/kralicky/jobserver/pkg/apis/job/v1;jobv1";
 
 service Job {
   // Starts a new job, and returns its id if it was started successfully.
@@ -101,15 +101,15 @@ message JobIdList {
 //   │                                         │
 //   └─────────────────────────────────────────┘
 enum State {
-  Unknown = 0;
+  UNKNOWN = 0;
   // The job is waiting to be started, and is not yet running.
-  Pending = 1;
+  PENDING = 1;
   // The job failed to start.
-  Failed = 2;
+  FAILED = 2;
   // The job started successfully and is currently running.
-  Running = 3;
+  RUNNING = 3;
   // The job is no longer running.
-  Terminated = 4;
+  TERMINATED = 4;
 }
 
 message JobStatus {
@@ -126,7 +126,7 @@ message JobStatus {
   int32 pid = 4;
   // The time at which the job was started. Only present if the job is
   // in the Running or Terminated state.
-  google.protobuf.Timestamp startTime = 5;
+  google.protobuf.Timestamp start_time = 5;
   // Termination details. Only present if the job is in the Terminated state.
   TerminationStatus terminated = 6;
 }
@@ -135,10 +135,10 @@ message JobStatus {
 message TerminationStatus {
   // If the process exited normally, this will contain its exit code. Otherwise,
   // if it was terminated by a signal, it will not be present.
-  optional int32 exitCode = 1;
+  int32 exit_code = 1;
   // If the process was terminated by a signal, this will contain the signal
   // number. Otherwise, it will not be present.
-  optional int32 signal = 2;
+  int32 signal = 2;
   // If the process was stopped by the user with the Stop() method, this will
   // be true. Otherwise, it will be false.
   bool stopped = 3;
@@ -171,7 +171,7 @@ message ResourceLimits {
   // Process CPU limit defined in milli-cores (1000 = 1 core/vcpu)
   optional int64 cpu = 1;
   // Process memory limit defined in bytes
-  optional MemoryLimits memory = 2;
+  MemoryLimits memory = 2;
   // Process IO limits for storage devices
   repeated IODeviceLimits io = 3;
 }
@@ -179,7 +179,7 @@ message ResourceLimits {
 message MemoryLimits {
   // Memory soft limit defined in bytes. Processes exceeding the limit are
   // not OOM-killed, but may be throttled by the kernel.
-  optional int64 softLimit = 1;
+  optional int64 soft_limit = 1;
   // Memory limit defined in bytes. If exceeded, the process will be OOM-killed.
   optional int64 limit = 2;
 }
@@ -193,11 +193,11 @@ message IODeviceLimits {
 
 message IOLimits {
   // Limit for read operations in bytes per second
-  optional int64 readBps = 2;
+  optional int64 read_bps = 2;
   // Limit for write operations in bytes per second
-  optional int64 writeBps = 3;
+  optional int64 write_bps = 3;
   // Limit for read operations in IOPS
-  optional int64 readIops = 4;
+  optional int64 read_iops = 4;
   // Limit for write operations in IOPS
-  optional int64 writeIops = 5;
+  optional int64 write_iops = 5;
 }

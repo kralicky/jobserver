@@ -23,6 +23,31 @@ var _ = Describe("StreamBuffer", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(n).To(Equal(5))
 		})
+		It("should read data in the same order it was written", func(ctx SpecContext) {
+			buf := util.NewStreamBuffer()
+			r1 := buf.NewStream(ctx)
+			for i := 0; i < 256; i++ {
+				n, err := buf.Write([]byte{byte(i)})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(n).To(Equal(1))
+			}
+			r2 := buf.NewStream(ctx)
+
+			buf.Close()
+
+			var buf1 []byte
+			var buf2 []byte
+			for b := range r1 {
+				buf1 = append(buf1, b...)
+			}
+			for b := range r2 {
+				buf2 = append(buf2, b...)
+			}
+			Expect(buf1).To(Equal(buf2))
+			for i := 0; i < 256; i++ {
+				Expect(buf1[i]).To(Equal(byte(i)))
+			}
+		})
 		It("should duplicate writes to all streams", func(ctx SpecContext) {
 			buf := util.NewStreamBuffer()
 			results := make([][]byte, 100)
@@ -59,8 +84,10 @@ var _ = Describe("StreamBuffer", func() {
 			for _, result := range results {
 				Expect(result).To(Equal([]byte("hello world")))
 			}
-			Expect(r).To(Receive(Equal([]byte("hello world"))))
-			Expect(r).To(BeClosed())
+			var recv []byte
+			Eventually(r).Should(Receive(&recv))
+			Expect(recv).To(Equal([]byte("hello world")))
+			Eventually(r).Should(BeClosed())
 		})
 	})
 	When("canceling the context of a stream", func() {
@@ -70,30 +97,31 @@ var _ = Describe("StreamBuffer", func() {
 			cctx, ca := context.WithCancel(ctx)
 			cancelReader := buf.NewStream(cctx)
 
-			buf.Write([]byte("hello"))
-			buf.Write([]byte(" "))
+			buf.Write([]byte("hello "))
+
+			var recv []byte
+			Eventually(reader).Should(Receive(&recv))
+			Expect(recv).To(Equal([]byte("hello ")))
+
+			Eventually(cancelReader).Should(Receive(&recv))
+			Expect(recv).To(Equal([]byte("hello ")))
+
 			ca()
-
-			Expect(reader).To(Receive(Equal([]byte("hello"))))
-			Expect(reader).To(Receive(Equal([]byte(" "))))
-
-			Expect(cancelReader).To(Receive(Equal([]byte("hello"))))
-			Expect(cancelReader).To(Receive(Equal([]byte(" "))))
 
 			Eventually(cancelReader).Should(BeClosed())
 
 			buf.Write([]byte("world"))
-			Expect(reader).To(Receive(Equal([]byte("world"))))
+			Eventually(reader).Should(Receive(&recv))
+			Expect(recv).To(Equal([]byte("world")))
 			buf.Close()
-			Expect(reader).To(BeClosed())
+			Eventually(reader).Should(BeClosed())
 		})
 	})
 	When("closing the buffer", func() {
 		When("writing to the buffer", func() {
 			It("should return an error", func() {
 				buf := util.NewStreamBuffer()
-				Expect(buf.Close()).NotTo(HaveOccurred())
-
+				Expect(buf.Close()).To(Succeed())
 				_, err := buf.Write([]byte("hello"))
 				Expect(err).To(MatchError(io.ErrClosedPipe))
 			})
@@ -109,8 +137,10 @@ var _ = Describe("StreamBuffer", func() {
 					Expect(buf.Close()).To(Succeed())
 
 					reader := buf.NewStream(ctx)
-					Expect(reader).To(Receive(Equal([]byte("hello world"))))
-					Expect(reader).To(BeClosed())
+					var recv []byte
+					Eventually(reader).Should(Receive(&recv))
+					Expect(recv).To(Equal([]byte("hello world")))
+					Eventually(reader).Should(BeClosed())
 				})
 				By("creating a stream before closing", func() {
 					buf := util.NewStreamBuffer()
@@ -122,8 +152,10 @@ var _ = Describe("StreamBuffer", func() {
 
 					Expect(buf.Close()).To(Succeed())
 
-					Expect(reader).To(Receive(Equal([]byte("hello world"))))
-					Expect(reader).To(BeClosed())
+					var recv []byte
+					Eventually(reader).Should(Receive(&recv))
+					Expect(recv).To(Equal([]byte("hello world")))
+					Eventually(reader).Should(BeClosed())
 				})
 			})
 			When("reading from existing streams after close", func() {
@@ -133,17 +165,18 @@ var _ = Describe("StreamBuffer", func() {
 						reader := buf.NewStream(ctx)
 
 						Expect(buf.Write([]byte("hello"))).To(Equal(5))
-						Expect(buf.Write([]byte(" "))).To(Equal(1))
 
-						Expect(reader).To(Receive(Equal([]byte("hello"))))
-						Expect(reader).To(Receive(Equal([]byte(" "))))
+						var recv []byte
+						Eventually(reader).Should(Receive(&recv))
+						Expect(recv).To(Equal([]byte("hello")))
 
 						Expect(buf.Write([]byte("world"))).To(Equal(5))
 
 						Expect(buf.Close()).To(Succeed())
 
-						Expect(reader).To(Receive(Equal([]byte("world"))))
-						Expect(reader).To(BeClosed())
+						Eventually(reader).Should(Receive(&recv))
+						Expect(recv).To(Equal([]byte("world")))
+						Eventually(reader).Should(BeClosed())
 					})
 				})
 			})

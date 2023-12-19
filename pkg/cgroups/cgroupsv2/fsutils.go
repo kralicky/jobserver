@@ -1,7 +1,6 @@
 package cgroupsv2
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -21,7 +20,6 @@ func listControllers(file string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	info = bytes.TrimSpace(info)
 	return strings.Fields(string(info)), nil
 }
 
@@ -35,14 +33,18 @@ func enableController(file, name string) (retErr error) {
 }
 
 const (
-	CFSPeriod   = 100000
-	CFSMinQuota = 1000
+	cfsPeriod   = 100000
+	cfsMinQuota = 1000
 )
 
+// For the purposes of this project, we assume that the jobserver has the
+// full resources of the machine available to it. This may not be true in
+// a real-world scenario (for example, the jobserver may itself be running
+// in a cgroup with limited resources).
 var availableMilliCpus = int64(runtime.NumCPU() * 1000)
 
 func mcpusToCfsQuota(milliCores int64) int64 {
-	return max(CFSMinQuota, int64(min(float64(milliCores)/float64(availableMilliCpus), 1.0)*CFSPeriod))
+	return max(cfsMinQuota, int64(min(float64(milliCores)/float64(availableMilliCpus), 1.0)*cfsPeriod))
 }
 
 func writeCpuMaxQuota(path string, quota int64) error {
@@ -50,7 +52,7 @@ func writeCpuMaxQuota(path string, quota int64) error {
 	if err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(f, "%d %d\n", quota, CFSPeriod)
+	_, err = fmt.Fprintf(f, "%d %d\n", quota, cfsPeriod)
 	return errors.Join(err, f.Close())
 }
 
@@ -77,24 +79,35 @@ func writeIoMax(path, deviceId string, ioLimits *jobv1.IOLimits) error {
 	if err != nil {
 		return err
 	}
-	var args []string
+	builder := strings.Builder{}
+	builder.WriteString(deviceId)
+	sz := builder.Len()
 	if ioLimits.ReadBps != nil {
-		args = append(args, fmt.Sprintf("rbps=%d", ioLimits.GetReadBps()))
+		builder.WriteString(fmt.Sprintf(" rbps=%d", ioLimits.GetReadBps()))
 	}
 	if ioLimits.WriteBps != nil {
-		args = append(args, fmt.Sprintf("wbps=%d", ioLimits.GetWriteBps()))
+		builder.WriteString(fmt.Sprintf(" wbps=%d", ioLimits.GetWriteBps()))
 	}
 	if ioLimits.ReadIops != nil {
-		args = append(args, fmt.Sprintf("riops=%d", ioLimits.GetReadIops()))
+		builder.WriteString(fmt.Sprintf(" riops=%d", ioLimits.GetReadIops()))
 	}
 	if ioLimits.WriteIops != nil {
-		args = append(args, fmt.Sprintf("wiops=%d", ioLimits.GetWriteIops()))
+		builder.WriteString(fmt.Sprintf(" wiops=%d", ioLimits.GetWriteIops()))
 	}
-	_, err = fmt.Fprintf(f, "%s %s\n", deviceId, strings.Join(args, " "))
+	if builder.Len() > sz { // at least one limit was set
+		fmt.Fprintln(f, builder.String())
+	}
 	return errors.Join(err, f.Close())
 }
 
 func killCgroup(path string) error {
+	if populated, err := isCgroupPopulated(path); err != nil {
+		return err
+	} else if !populated {
+		return nil
+	}
+	slog.Debug("killing cgroup", "path", path)
+
 	// start an inotify watcher on cgroup.events
 	fd, err := syscall.InotifyInit1(syscall.IN_CLOEXEC)
 	if err != nil {
@@ -107,7 +120,7 @@ func killCgroup(path string) error {
 			}
 		}
 	}()
-	_, err = syscall.InotifyAddWatch(fd, filepath.Join(path, "cgroup.events"), syscall.IN_MODIFY|syscall.IN_ONESHOT)
+	_, err = syscall.InotifyAddWatch(fd, filepath.Join(path, "cgroup.events"), syscall.IN_MODIFY)
 	if err != nil {
 		return err
 	}
@@ -134,10 +147,33 @@ func killCgroup(path string) error {
 			}
 			return err
 		}
+		if populated, err := isCgroupPopulated(path); err != nil {
+			return err
+		} else if populated {
+			slog.Debug("cgroup still populated, waiting")
+			continue
+		}
 		break
 	}
 	slog.Debug("cgroup killed successfully", "took", time.Since(start))
 	return nil
+}
+
+func isCgroupPopulated(path string) (bool, error) {
+	contents, err := os.ReadFile(filepath.Join(path, "cgroup.events"))
+	if err != nil {
+		return false, err
+	}
+	for _, line := range strings.Split(string(contents), "\n") {
+		k, v, ok := strings.Cut(line, " ")
+		if !ok {
+			continue
+		}
+		if k == "populated" {
+			return v == "1", nil
+		}
+	}
+	return false, nil
 }
 
 func lookupDeviceId(path string) (string, error) {

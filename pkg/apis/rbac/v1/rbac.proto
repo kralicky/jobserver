@@ -4,14 +4,14 @@ package rbac.v1;
 
 import "google/protobuf/descriptor.proto";
 
-option go_package = "github.com/kralicky/jobserver/pkg/apis/rbac/v1";
+option go_package = "github.com/kralicky/jobserver/pkg/apis/rbac/v1;rbacv1";
 
 // Describes a complete RBAC configuration.
 message Config {
   // A list of available roles.
   repeated Roles roles = 2;
   // A list of available role bindings.
-  repeated RoleBindings roleBindings = 3;
+  repeated RoleBindings role_bindings = 3;
 }
 
 // Describes a role that allows access to methods within a service.
@@ -25,13 +25,13 @@ message Roles {
   // A list of methods that the role allows access to. The method names must
   // not be qualified with the service name. All methods must exist in the
   // named service. For example, `rpc Bar` in `service Foo` should be "Bar".
-  repeated AllowedMethod allowedMethods = 3;
+  repeated AllowedMethod allowed_methods = 3;
 }
 
 enum Scope {
-  None        = 0; // the method does not have scope semantics
-  CurrentUser = 1; // default, allows access to jobs created by the current user
-  AllUsers    = 2; // allows access to jobs created by any user
+  NONE         = 0; // the method does not have scope semantics
+  CURRENT_USER = 1; // default, allows access to jobs created by the current user
+  ALL_USERS    = 2; // allows access to jobs created by any user
 }
 
 message AllowedMethod {
@@ -46,13 +46,13 @@ message RoleBindings {
   // An arbitrary unique identifier for the role binding.
   string id = 1;
   // An existing role id.
-  string roleId = 2;
+  string role_id = 2;
   // A list of users (usernames/emails) that the role applies to.
   repeated string users = 3;
 }
 
 extend google.protobuf.MethodOptions {
-  ScopeOptions scope = 20001;
+  ScopeOptions scope = 50000;
 }
 
 message ScopeOptions {

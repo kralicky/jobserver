@@ -28,8 +28,8 @@ type Runtime interface {
 	Execute(ctx context.Context, spec *jobv1.JobSpec) (Process, error)
 }
 
-// RuntimeId is a string name that can also be used as a key into LookupRuntime.
-type RuntimeId string
+// RuntimeID is an opaque string id that can also be used as a key into LookupRuntime.
+type RuntimeID string
 
 // ErrStoppedByUser is a sentinel error that is used to indicate that a job
 // was terminated by a signal initiated by the user.
@@ -39,15 +39,28 @@ type RuntimeId string
 // [exec.CommandContext] for the process.
 var ErrStoppedByUser = errors.New("job stopped by user")
 
-var allRuntimes = make(map[RuntimeId]RuntimeBuilder)
+var allRuntimes = make(map[RuntimeID]RuntimeBuilder)
 
 type RuntimeBuilder func() (Runtime, error)
 
-func RegisterRuntime(id RuntimeId, builder RuntimeBuilder) {
+// RegisterRuntime registers a new runtime with the given id. This must only
+// be called from an init() function.
+//
+// To link in a new runtime, use a blank import (ideally in package main).
+//
+// For example:
+//
+//	package main
+//	import (
+//		_ "github.com/kralicky/jobserver/pkg/cgroups/cgroupsv2"
+//	)
+func RegisterRuntime(id RuntimeID, builder RuntimeBuilder) {
 	allRuntimes[id] = builder
 }
 
-func LookupRuntime(id RuntimeId) (RuntimeBuilder, bool) {
+// LookupRuntime returns a previously registered runtime with the given id.
+// The runtime must have been linked in to the currntly running binary.
+func LookupRuntime(id RuntimeID) (RuntimeBuilder, bool) {
 	builder, ok := allRuntimes[id]
 	return builder, ok
 }
