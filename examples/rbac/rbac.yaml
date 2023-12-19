@@ -1,0 +1,36 @@
+roles:
+  - id: adminRole
+    service: job.v1.Job
+    allowedMethods:
+      - name: Start
+      - name: Stop
+        scope: ALL_USERS
+      - name: Status
+        scope: ALL_USERS
+      - name: List
+        scope: ALL_USERS
+      - name: Output
+        scope: ALL_USERS
+  - id: userRole
+    service: job.v1.Job
+    allowedMethods:
+      - name: Start
+      - name: Stop
+        scope: CURRENT_USER
+      - name: Status
+        scope: CURRENT_USER
+      - name: List
+        scope: CURRENT_USER
+      - name: Output
+        scope: CURRENT_USER
+roleBindings:
+  - id: adminRoleBinding
+    roleId: adminRole
+    users:
+      - admin
+  - id: userRoleBinding
+    roleId: userRole
+    users:
+      - user1
+      - user2
+      - user3
