@@ -23,13 +23,17 @@ func listControllers(file string) ([]string, error) {
 	return strings.Fields(string(info)), nil
 }
 
-func enableController(file, name string) (retErr error) {
+func sysFsWrite(file string, str string) error {
 	f, err := os.OpenFile(file, os.O_WRONLY, 0)
 	if err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(f, "+%s\n", name)
+	_, err = fmt.Fprintln(f, str)
 	return errors.Join(err, f.Close())
+}
+
+func enableController(file, name string) (retErr error) {
+	return sysFsWrite(file, fmt.Sprintf("+%s\n", name))
 }
 
 const (
@@ -48,37 +52,18 @@ func mcpusToCfsQuota(milliCores int64) int64 {
 }
 
 func writeCpuMaxQuota(path string, quota int64) error {
-	f, err := os.OpenFile(filepath.Join(path, "cpu.max"), os.O_WRONLY, 0)
-	if err != nil {
-		return err
-	}
-	_, err = fmt.Fprintf(f, "%d %d\n", quota, cfsPeriod)
-	return errors.Join(err, f.Close())
+	return sysFsWrite(filepath.Join(path, "cpu.max"), fmt.Sprintf("%d %d\n", quota, cfsPeriod))
 }
 
 func writeMemoryHigh(path string, high int64) error {
-	f, err := os.OpenFile(filepath.Join(path, "memory.high"), os.O_WRONLY, 0)
-	if err != nil {
-		return err
-	}
-	_, err = fmt.Fprintf(f, "%d\n", high)
-	return errors.Join(err, f.Close())
+	return sysFsWrite(filepath.Join(path, "memory.high"), fmt.Sprintf("%d\n", high))
 }
 
 func writeMemoryMax(path string, max int64) error {
-	f, err := os.OpenFile(filepath.Join(path, "memory.max"), os.O_WRONLY, 0)
-	if err != nil {
-		return err
-	}
-	_, err = fmt.Fprintf(f, "%d\n", max)
-	return errors.Join(err, f.Close())
+	return sysFsWrite(filepath.Join(path, "memory.max"), fmt.Sprintf("%d\n", max))
 }
 
 func writeIoMax(path, deviceId string, ioLimits *jobv1.IOLimits) error {
-	f, err := os.OpenFile(filepath.Join(path, "io.max"), os.O_WRONLY, 0)
-	if err != nil {
-		return err
-	}
 	builder := strings.Builder{}
 	builder.WriteString(deviceId)
 	sz := builder.Len()
@@ -94,18 +79,17 @@ func writeIoMax(path, deviceId string, ioLimits *jobv1.IOLimits) error {
 	if ioLimits.WriteIops != nil {
 		builder.WriteString(fmt.Sprintf(" wiops=%d", ioLimits.GetWriteIops()))
 	}
-	if builder.Len() > sz { // at least one limit was set
-		fmt.Fprintln(f, builder.String())
+	if builder.Len() == sz { // no limits specified
+		return nil
 	}
-	return errors.Join(err, f.Close())
+	return sysFsWrite(filepath.Join(path, "io.max"), builder.String())
+}
+
+func writeCgroupKill(path string) error {
+	return sysFsWrite(filepath.Join(path, "cgroup.kill"), "1")
 }
 
 func killCgroup(path string) error {
-	if populated, err := isCgroupPopulated(path); err != nil {
-		return err
-	} else if !populated {
-		return nil
-	}
 	slog.Debug("killing cgroup", "path", path)
 
 	// start an inotify watcher on cgroup.events
@@ -126,34 +110,27 @@ func killCgroup(path string) error {
 	}
 
 	// write '1' to cgroup.kill
-	f, err := os.OpenFile(filepath.Join(path, "cgroup.kill"), os.O_WRONLY, 0)
-	if err != nil {
+	if err := writeCgroupKill(path); err != nil {
 		return err
 	}
-	if _, err := f.Write([]byte{'1'}); err != nil {
-		return err
-	}
-	f.Close()
 
 	// wait for cgroup.events to be modified
 	start := time.Now()
-	slog.Debug("killed cgroup; waiting for event signal")
 	var buf [syscall.SizeofInotifyEvent]byte
 	for {
+		if populated, err := isCgroupPopulated(path); err != nil {
+			return err
+		} else if !populated {
+			break
+		}
+		slog.Debug("waiting for cgroup to become unpopulated", "path", path)
 		_, err := syscall.Read(fd, buf[:])
 		if err != nil {
-			if err == syscall.EINTR {
+			if errors.Is(err, syscall.EINTR) {
 				continue
 			}
 			return err
 		}
-		if populated, err := isCgroupPopulated(path); err != nil {
-			return err
-		} else if populated {
-			slog.Debug("cgroup still populated, waiting")
-			continue
-		}
-		break
 	}
 	slog.Debug("cgroup killed successfully", "took", time.Since(start))
 	return nil

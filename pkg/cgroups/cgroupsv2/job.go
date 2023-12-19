@@ -52,6 +52,7 @@ func (j *v2Process) start() {
 	j.status.Message = jobv1.State_RUNNING.String()
 	j.status.Pid = int32(j.cmd.Process.Pid)
 	lg.Info("command started")
+
 	go func() {
 		defer j.streamBuf.Close()
 		defer close(j.done)

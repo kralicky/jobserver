@@ -54,24 +54,10 @@ func (l *v2Runtime) Execute(ctx context.Context, spec *jobv1.JobSpec) (jobs.Proc
 	cmd.Stdout = streamBuf
 	cmd.Stderr = streamBuf
 	cmd.Stdin = nil
+	cmd.WaitDelay = gracePeriod
 	cmd.Cancel = func() error {
-		lg := slog.With("id", id)
-		lg.Debug("context canceled; attempting graceful shutdown")
+		slog.With("id", id).Debug("context canceled; attempting graceful shutdown")
 		streamBuf.Close() // NB: leaving this open will cause cmd.Wait to hang
-		start := time.Now()
-		go func() {
-			timeout := time.NewTimer(gracePeriod)
-			defer timeout.Stop()
-			select {
-			case <-timeout.C:
-				lg.Warn("process did did not exit within grace period, sending SIGKILL")
-				if err := cmd.Process.Signal(syscall.SIGKILL); err != nil {
-					lg.Error("failed to send SIGKILL", "error", err)
-				}
-			case <-done:
-				lg.Debug("process exited within grace period", "took", time.Since(start))
-			}
-		}()
 		return cmd.Process.Signal(syscall.SIGTERM)
 	}
 

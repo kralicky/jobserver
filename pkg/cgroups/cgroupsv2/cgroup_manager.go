@@ -1,6 +1,7 @@
 package cgroupsv2
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -24,18 +25,19 @@ type cgroupManager struct {
 }
 
 func newCgroupManager() (*cgroupManager, error) {
-	if ok, err := requiredControllersEnabled(filepath.Join(hierarchyRootPath, "cgroup.controllers")); !ok {
-		return nil, err
-	}
+	// note: we are deliberately not modifying the parent cgroup's controllers
+	// as to not interfere with the host's configuration.
 	if ok, err := requiredControllersEnabled(filepath.Join(hierarchyRootPath, "cgroup.subtree_control")); !ok {
 		return nil, err
 	}
 	// create the jobserver cgroup if it doesn't exist
 	jobserverCgroup := filepath.Join(hierarchyRootPath, jobserverCgroup)
-	if _, err := os.Stat(jobserverCgroup); os.IsNotExist(err) {
-		if err := os.Mkdir(jobserverCgroup, 0755); err != nil {
+	if err := os.Mkdir(jobserverCgroup, 0755); err != nil {
+		if !errors.Is(err, os.ErrExist) {
 			return nil, fmt.Errorf("failed to create jobserver cgroup: %w", err)
 		}
+		slog.Info("using existing cgroup", "path", jobserverCgroup)
+	} else {
 		slog.Info("created jobserver cgroup", "path", jobserverCgroup)
 	}
 
@@ -67,12 +69,12 @@ func (m *cgroupManager) CreateCgroupWithLimits(id string, limits *jobv1.Resource
 	}
 	if limits.Memory != nil {
 		if limits.Memory.SoftLimit != nil {
-			if err := writeMemoryHigh(path, limits.Memory.GetSoftLimit()); err != nil {
+			if err := writeMemoryHigh(path, *limits.Memory.SoftLimit); err != nil {
 				return "", fmt.Errorf("failed to set memory.high: %w", err)
 			}
 		}
 		if limits.Memory.Limit != nil {
-			if err := writeMemoryMax(path, limits.Memory.GetLimit()); err != nil {
+			if err := writeMemoryMax(path, *limits.Memory.Limit); err != nil {
 				return "", fmt.Errorf("failed to set memory.max: %w", err)
 			}
 		}
