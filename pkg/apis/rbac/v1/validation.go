@@ -63,10 +63,8 @@ func (c *Config) validateRoles() error {
 				}
 			}
 			// scope must be configured iff the method has scope semantics enabled
-			var scopeEnabled bool
-			if opts := proto.GetExtension(mtdDesc.Options(), E_Scope).(*ScopeOptions); opts != nil {
-				scopeEnabled = opts.GetEnabled()
-			}
+			opts, _ := proto.GetExtension(mtdDesc.Options(), E_Scope).(*ScopeOptions)
+			scopeEnabled := opts.GetEnabled()
 			switch {
 			case scopeConfigured && !scopeEnabled:
 				return fmt.Errorf("invalid role %q: method %q does not support scopes", roleId, methodName)
