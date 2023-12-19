@@ -20,7 +20,7 @@ func completeJobIds(cmd *cobra.Command, args []string, toComplete string) ([]str
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveError
 	}
-	var ids []string
+	ids := make([]string, 0, len(resp.GetItems()))
 	for _, job := range resp.GetItems() {
 		jobId := job.GetId()
 		if slices.Contains(args, jobId) {

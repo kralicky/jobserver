@@ -62,9 +62,9 @@ func (i userJobId) AssignedUser() auth.AuthenticatedUser {
 }
 
 // ListJobs implements v1.JobServer.
-func (c *Server) List(ctx context.Context, _ *emptypb.Empty) (*jobv1.JobIdList, error) {
+func (s *Server) List(ctx context.Context, _ *emptypb.Empty) (*jobv1.JobIdList, error) {
 	var jobIds []userJobId
-	c.jobs.Range(func(k, v any) bool {
+	s.jobs.Range(func(k, v any) bool {
 		jobIds = append(jobIds, userJobId{
 			JobId: &jobv1.JobId{Id: k.(string)},
 			user:  v.(jobInfo).owner,
@@ -87,10 +87,10 @@ func (c *Server) List(ctx context.Context, _ *emptypb.Empty) (*jobv1.JobIdList, 
 	}, nil
 }
 
-func (c *Server) lookupScoped(ctx context.Context, id *jobv1.JobId) (jobInfo, error) {
+func (s *Server) lookupScoped(ctx context.Context, id *jobv1.JobId) (jobInfo, error) {
 	var user auth.AuthenticatedUser
 	// if the job doesn't exist, don't short circuit
-	job, ok := c.jobs.Load(id.Id)
+	job, ok := s.jobs.Load(id.Id)
 	if ok {
 		user = job.(jobInfo).owner
 	}
@@ -104,8 +104,8 @@ func (c *Server) lookupScoped(ctx context.Context, id *jobv1.JobId) (jobInfo, er
 }
 
 // GetStatus implements v1.JobServer.
-func (c *Server) Status(ctx context.Context, id *jobv1.JobId) (*jobv1.JobStatus, error) {
-	job, err := c.lookupScoped(ctx, id)
+func (s *Server) Status(ctx context.Context, id *jobv1.JobId) (*jobv1.JobStatus, error) {
+	job, err := s.lookupScoped(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -113,10 +113,10 @@ func (c *Server) Status(ctx context.Context, id *jobv1.JobId) (*jobv1.JobStatus,
 }
 
 // Start implements v1.JobServer.
-func (c *Server) Start(ctx context.Context, in *jobv1.JobSpec) (*jobv1.JobId, error) {
+func (s *Server) Start(ctx context.Context, in *jobv1.JobSpec) (*jobv1.JobId, error) {
 	user := auth.AuthenticatedUserFromContext(ctx)
 	jobCtx, cancel := context.WithCancelCause(context.TODO())
-	proc, err := c.runtime.Execute(jobCtx, in)
+	proc, err := s.runtime.Execute(jobCtx, in)
 	if err != nil {
 		cancel(err)
 		slog.With("error", err).Error("failed to start job")
@@ -125,7 +125,7 @@ func (c *Server) Start(ctx context.Context, in *jobv1.JobSpec) (*jobv1.JobId, er
 
 	id := proc.ID()
 
-	c.jobs.Store(id, jobInfo{
+	s.jobs.Store(id, jobInfo{
 		Process: proc,
 		owner:   user,
 		cancel:  cancel,
@@ -135,8 +135,8 @@ func (c *Server) Start(ctx context.Context, in *jobv1.JobSpec) (*jobv1.JobId, er
 }
 
 // Stop implements v1.JobServer.
-func (c *Server) Stop(ctx context.Context, id *jobv1.JobId) (*emptypb.Empty, error) {
-	jobValue, ok := c.jobs.Load(id.Id)
+func (s *Server) Stop(ctx context.Context, id *jobv1.JobId) (*emptypb.Empty, error) {
+	jobValue, ok := s.jobs.Load(id.Id)
 	if !ok {
 		return nil, status.Errorf(codes.NotFound, "job %s not found", id.Id)
 	}
@@ -159,8 +159,8 @@ func (c *Server) Stop(ctx context.Context, id *jobv1.JobId) (*emptypb.Empty, err
 const maxChunkSize = 512 * 1024 // 512 KiB
 
 // Output implements v1.JobServer.
-func (c *Server) Output(id *jobv1.JobId, stream jobv1.Job_OutputServer) error {
-	jobValue, ok := c.jobs.Load(id.Id)
+func (s *Server) Output(id *jobv1.JobId, stream jobv1.Job_OutputServer) error {
+	jobValue, ok := s.jobs.Load(id.Id)
 	if !ok {
 		return status.Errorf(codes.NotFound, "job %s not found", id.Id)
 	}

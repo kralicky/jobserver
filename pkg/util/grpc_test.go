@@ -48,7 +48,6 @@ var _ = Describe("GRPC Utils", func() {
 	Context("ServerStreamWithContext", func() {
 		When("creating a server stream with a context", func() {
 			It("should wrap the underlying stream with the provided context", func() {
-
 				ctx := context.WithValue(context.Background(), sampleContextKey, "sample-value")
 				stream := util.ServerStreamWithContext(ctx, testServerStream{})
 				Expect(stream.Context()).To(Equal(ctx))

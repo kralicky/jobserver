@@ -107,7 +107,6 @@ var _ = Describe("Scope", func() {
 				scope = rbacv1.Scope_ALL_USERS
 			})
 			It("should return all items", func() {
-
 				filtered, err := rbac.FilterByScope(authCtx, sampleItems)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(filtered).To(Equal(sampleItems))

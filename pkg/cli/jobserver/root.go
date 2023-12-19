@@ -21,9 +21,8 @@ func BuildRootCmd() *cobra.Command {
 				var level slog.Level
 				if err := level.UnmarshalText([]byte(logLevel)); err != nil {
 					return fmt.Errorf("invalid log level %q: %w", logLevel, err)
-				} else {
-					logger.LogLevel.Set(level)
 				}
+				logger.LogLevel.Set(level)
 			}
 			return nil
 		},
