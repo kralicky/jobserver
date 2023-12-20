@@ -3,6 +3,7 @@ module github.com/kralicky/jobserver
 go 1.21.4
 
 require (
+	github.com/bufbuild/protoyaml-go v0.1.7
 	github.com/google/uuid v1.3.1
 	github.com/jedib0t/go-pretty/v6 v6.4.9
 	github.com/kralicky/protols v0.0.0-20231219004014-2c8bbe86a91e
@@ -16,9 +17,10 @@ require (
 )
 
 require (
+	buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go v1.31.0-20231106192134-1baebb0a1518.2 // indirect
 	cloud.google.com/go/dlp v1.11.1 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.0 // indirect
-	github.com/bufbuild/protovalidate-go v0.3.4 // indirect
+	github.com/bufbuild/protovalidate-go v0.4.0 // indirect
 	github.com/go-logr/logr v1.3.0 // indirect
 	github.com/go-task/slim-sprig v0.0.0-20230315185526-52ccab3ef572 // indirect
 	github.com/golang/protobuf v1.5.3 // indirect
@@ -46,5 +48,4 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20231212172506-995d672761c0 // indirect
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-	sigs.k8s.io/yaml v1.4.0
 )

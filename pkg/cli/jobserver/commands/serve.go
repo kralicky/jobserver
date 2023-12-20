@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/bufbuild/protoyaml-go"
 	rbacv1 "github.com/kralicky/jobserver/pkg/apis/rbac/v1"
 	"github.com/kralicky/jobserver/pkg/auth"
 	"github.com/kralicky/jobserver/pkg/cgroups"
@@ -11,8 +12,6 @@ import (
 	"github.com/kralicky/jobserver/pkg/rbac"
 	"github.com/kralicky/jobserver/pkg/server"
 	"github.com/spf13/cobra"
-	"google.golang.org/protobuf/encoding/protojson"
-	"sigs.k8s.io/yaml"
 )
 
 // ServeCmd represents the serve command
@@ -21,21 +20,16 @@ func BuildServeCmd() *cobra.Command {
 	var serverConfig server.Options
 	cmd := &cobra.Command{
 		Use:   "serve",
-		Short: "A brief description of your command",
-		Long:  ``,
+		Short: "Run the job server.",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if os.Geteuid() != 0 {
-				return fmt.Errorf("server must be run as root (try 'sudo %s serve')", os.Args[0])
+			config, err := loadRbacConfig(rbacConfigFile)
+			if err != nil {
+				return fmt.Errorf("failed to parse RBAC configuration: %w", err)
 			}
-			if rbacConfigFile != "" {
-				config, err := loadRbacConfig(rbacConfigFile)
-				if err != nil {
-					return fmt.Errorf("failed to parse RBAC configuration: %w", err)
-				}
-				serverConfig.AuthMiddlewares = []auth.Middleware{
-					auth.NewMiddleware(auth.NewMTLSAuthenticator()),
-					rbac.NewAllowedMethodsMiddleware(config),
-				}
+			serverConfig.AuthMiddlewares = []auth.Middleware{
+				auth.NewMiddleware(auth.NewMTLSAuthenticator()),
+				rbac.NewAllowedMethodsMiddleware(config),
 			}
 			runtimeId, err := cgroups.DetectFilesystemRuntime()
 			if err != nil {
@@ -59,6 +53,7 @@ func BuildServeCmd() *cobra.Command {
 	cmd.Flags().StringVar(&serverConfig.CaCertFile, "cacert", "", "path to the CA certificate")
 	cmd.Flags().StringVar(&serverConfig.CertFile, "cert", "", "path to the server certificate")
 	cmd.Flags().StringVar(&serverConfig.KeyFile, "key", "", "path to the server key")
+	cmd.MarkFlagRequired("rbac")
 	cmd.MarkFlagRequired("cacert")
 	cmd.MarkFlagRequired("cert")
 	cmd.MarkFlagRequired("key")
@@ -72,15 +67,12 @@ func loadRbacConfig(path string) (*rbacv1.Config, error) {
 	}
 
 	config := &rbacv1.Config{}
-
-	data, err = yaml.YAMLToJSON(data)
-	if err != nil {
-		return nil, fmt.Errorf("malformed rbac configuration file, expecting yaml or json: %w", err)
+	opts := protoyaml.UnmarshalOptions{
+		Path: path,
 	}
-	if err := protojson.Unmarshal(data, config); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal rbac configuration: %w", err)
+	if err := opts.Unmarshal(data, config); err != nil {
+		return nil, err
 	}
-
 	if err := config.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid rbac configuration: %w", err)
 	}
