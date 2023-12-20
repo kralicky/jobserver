@@ -66,7 +66,7 @@ func BuildRootCmd() *cobra.Command {
 				return fmt.Errorf("failed to dial job server: %w", err)
 			}
 
-			cmd.SetContext(jobv1.ContextWithClient(cmd.Context(), jobv1.NewJobClient(cc)))
+			cmd.SetContext(commands.ContextWithJobClient(cmd.Context(), jobv1.NewJobClient(cc)))
 			return nil
 		},
 	}

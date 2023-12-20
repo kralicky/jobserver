@@ -3,7 +3,6 @@ package commands
 import (
 	"slices"
 
-	jobv1 "github.com/kralicky/jobserver/pkg/apis/job/v1"
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
@@ -12,7 +11,7 @@ func completeJobIds(cmd *cobra.Command, args []string, toComplete string) ([]str
 	if err := cmd.Root().PersistentPreRunE(cmd, args); err != nil {
 		return nil, cobra.ShellCompDirectiveError
 	}
-	client, ok := jobv1.ClientFromContext(cmd.Context())
+	client, ok := jobClientFromContext(cmd.Context())
 	if !ok {
 		return nil, cobra.ShellCompDirectiveError
 	}

@@ -58,7 +58,7 @@ To stream the output of the job, use the command '%[1]s logs <id>'.
 `[1:], os.Args[0]),
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client, ok := jobv1.ClientFromContext(cmd.Context())
+			client, ok := jobClientFromContext(cmd.Context())
 			if !ok {
 				cmd.PrintErrln("failed to get client from context")
 				return nil

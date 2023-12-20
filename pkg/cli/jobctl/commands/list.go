@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/jedib0t/go-pretty/v6/table"
-	jobv1 "github.com/kralicky/jobserver/pkg/apis/job/v1"
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
@@ -18,7 +17,7 @@ func BuildJobListCmd() *cobra.Command {
 		Short:   "Show all existing jobs.",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client, ok := jobv1.ClientFromContext(cmd.Context())
+			client, ok := jobClientFromContext(cmd.Context())
 			if !ok {
 				cmd.PrintErrln("failed to get client from context")
 				return nil

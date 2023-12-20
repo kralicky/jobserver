@@ -22,7 +22,7 @@ killed with SIGKILL.
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: completeJobIds,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client, ok := jobv1.ClientFromContext(cmd.Context())
+			client, ok := jobClientFromContext(cmd.Context())
 			if !ok {
 				cmd.PrintErrln("failed to get client from context")
 				return nil
