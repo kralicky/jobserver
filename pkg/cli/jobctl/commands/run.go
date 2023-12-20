@@ -52,8 +52,8 @@ To stream the output of the job, use the command '%[1]s logs <id>'.
     $ %[1]s run \
        --cpus=100m \
        --memory=1Gi \
-       --device-read-bps=/dev/sda=200 \
-       --device-write-bps=/dev/sda=50,/dev/sdb=100 \
+       --device-read-bps=/dev/sda=2097152 \
+       --device-write-bps=/dev/sda=2097152,/dev/sdb=4194304 \
        -- go build -o bin/jobserver ./cmd/jobserver
 `[1:], os.Args[0]),
 		Args: cobra.MinimumNArgs(1),
@@ -130,9 +130,9 @@ To stream the output of the job, use the command '%[1]s logs <id>'.
 	cmd.Flags().StringVar(&memorySoftLimit, "memory-soft-limit", "",
 		"soft limit for memory usage                 (ex: '100Mi' or '256k' or '4G')")
 	cmd.Flags().StringSliceVar(&deviceReadBps, "device-read-bps", nil,
-		"device read bandwidth limits (id|path=bps)  (ex: '8:16=200' or '/dev/sda=200')")
+		"device read bandwidth limits (id|path=bps)  (ex: '8:16=2097152' or '/dev/sda=2097152')")
 	cmd.Flags().StringSliceVar(&deviceWriteBps, "device-write-bps", nil,
-		"device write bandwidth limits (id|path=bps) (ex: '8:16=200' or '/dev/sda=200')")
+		"device write bandwidth limits (id|path=bps) (ex: '8:16=2097152' or '/dev/sda=2097152')")
 	cmd.Flags().StringSliceVar(&deviceReadIops, "device-read-iops", nil,
 		"device read IOPS limits (id|path=iops)      (ex: '8:16=200' or '/dev/sda=200')")
 	cmd.Flags().StringSliceVar(&deviceWriteIops, "device-write-iops", nil,
