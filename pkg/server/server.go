@@ -202,7 +202,7 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 		Certificates: []tls.Certificate{cert},
 		MinVersion:   tls.VersionTLS13,
 	}
-	serverOptions := []grpc.ServerOption{
+	server := grpc.NewServer(
 		grpc.Creds(credentials.NewTLS(tlsConfig)),
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
 			MinTime:             15 * time.Second,
@@ -213,13 +213,9 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 			Timeout: 5 * time.Second,
 		}),
 		grpc.NumStreamWorkers(uint32(runtime.NumCPU())),
-	}
-	serverOptions = append(serverOptions,
 		grpc.ChainStreamInterceptor(auth.StreamServerInterceptor(s.AuthMiddlewares)),
 		grpc.ChainUnaryInterceptor(auth.UnaryServerInterceptor(s.AuthMiddlewares)),
 	)
-
-	server := grpc.NewServer(serverOptions...)
 	jobv1.RegisterJobServer(server, s)
 
 	listener, err := net.Listen("tcp", s.ListenAddress)
