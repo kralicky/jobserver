@@ -107,7 +107,7 @@ func (b *StreamBuffer) NewStream(ctx context.Context) <-chan []byte {
 
 	rc := make(chan []byte, 1)
 
-	notifier := make(chan struct{})
+	notifier := make(chan struct{}, 1)
 	b.nextID++
 	id := b.nextID
 	b.notifiers[id] = notifier
