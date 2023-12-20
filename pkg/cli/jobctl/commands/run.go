@@ -292,14 +292,8 @@ func parseIoLimit(limit string) (string, int64, error) {
 		return "", 0, fmt.Errorf("invalid limit value: %w", err)
 	}
 
-	if filepath.IsAbs(dev) {
-		return dev, limInt, nil
-	}
-
-	idLink := filepath.Join("/dev/block/", dev)
-	path, err := os.Readlink(idLink)
-	if err != nil {
+	if !filepath.IsAbs(dev) {
 		return "", 0, fmt.Errorf("expecting device id to be a path or 'major:minor' id")
 	}
-	return path, limInt, nil
+	return dev, limInt, nil
 }
