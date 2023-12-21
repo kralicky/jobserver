@@ -115,7 +115,7 @@ func (s *Server) Status(ctx context.Context, id *jobv1.JobId) (*jobv1.JobStatus,
 // Start implements v1.JobServer.
 func (s *Server) Start(ctx context.Context, in *jobv1.JobSpec) (*jobv1.JobId, error) {
 	user := auth.AuthenticatedUserFromContext(ctx)
-	jobCtx, cancel := context.WithCancelCause(context.TODO())
+	jobCtx, cancel := context.WithCancelCause(context.Background())
 	proc, err := s.runtime.Execute(jobCtx, in)
 	if err != nil {
 		cancel(err)
