@@ -16,9 +16,7 @@ const (
 	jobserverCgroup   = "kralicky-jobserver"
 )
 
-var (
-	requiredControllers = []string{"cpu", "memory", "io"}
-)
+var requiredControllers = []string{"cpu", "memory", "io"}
 
 type cgroupManager struct {
 	path string
@@ -32,7 +30,7 @@ func newCgroupManager() (*cgroupManager, error) {
 	}
 	// create the jobserver cgroup if it doesn't exist
 	jobserverCgroup := filepath.Join(hierarchyRootPath, jobserverCgroup)
-	if err := os.Mkdir(jobserverCgroup, 0755); err != nil {
+	if err := os.Mkdir(jobserverCgroup, 0o755); err != nil {
 		if !errors.Is(err, os.ErrExist) {
 			return nil, fmt.Errorf("failed to create jobserver cgroup: %w", err)
 		}
@@ -52,7 +50,7 @@ func newCgroupManager() (*cgroupManager, error) {
 func (m *cgroupManager) CreateCgroupWithLimits(id string, limits *jobv1.ResourceLimits) (string, error) {
 	// create a new cgroup for the job
 	path := filepath.Join(m.path, id)
-	if err := os.Mkdir(path, 0755); err != nil {
+	if err := os.Mkdir(path, 0o755); err != nil {
 		return "", fmt.Errorf("failed to create cgroup %s: %w", path, err)
 	}
 	slog.Info("created cgroup", "path", path, "job", id)
